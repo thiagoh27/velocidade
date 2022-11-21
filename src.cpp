@@ -9,31 +9,24 @@ It's coded in a way that the micros rollover doesn't create glitches every 71 mi
 without problems.
 We use an interrupt for the input so you have to choose pin 2 or 3 (for Arduino Uno/nano). In this example we
 use pin 2.
-/////// OLED 0.96" Display:
-We are going to use the OLED 128x64 I2C with SSD1306 driver using the Adafruit library.
-Pins for OLED display and arduino uno/nano:
- * GND = GND
- * VCC = 5V
- * SCL = A5
- * SDA = A4
-It's a good idea to put a resistor between A4-5V and A5-5V to help stabilize the connection.
-What that does is pull-up the I2C pins to make it more reliable and prevents lock-ups.
-Libraries needed for the OLED display:
-https://github.com/adafruit/Adafruit_SSD1306
-https://github.com/adafruit/Adafruit-GFX-Library
-This sketch was made for my video tutorial shown here: https://www.youtube.com/watch?v=u2uJMJWsfsg
-Made by InterlinkKnight
-Last update: 05/23/2019
 */
 
 
+// DISPLAY
+#include <Arduino.h>
+#include <INA.h>
+#include <U8glib.h>
+#include <stdlib.h>
+#include <Wire.h>
+
+U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NO_ACK);
+INA_Class INA;
 
 ///////////////
 // Calibration:
 ///////////////
 
-const byte PulsesPerRevolution = 6;  // Set how many pulses there are on each revolution. Default: 2.
-
+const byte PulsesPerRevolution = 3;  // Set how many pulses there are on each revolution. Default: 2.
 
 // If the period between pulses is too high, or even if the pulses stopped, then we would get stuck showing the
 // last value instead of a 0. Because of this we are going to set a limit for the maximum period allowed.
@@ -42,17 +35,12 @@ const byte PulsesPerRevolution = 6;  // Set how many pulses there are on each re
 // at very low RPM.
 // Setting a low value is going to allow the detection of stop situations faster, but it will prevent having low RPM readings.
 // The unit is in microseconds.
-const unsigned long ZeroTimeout = 10000000;  // For high response time, a good value would be 100000.
+const unsigned long ZeroTimeout = 2000000;  // For high response time, a good value would be 100000.
                                            // For reading very low RPM, a good value would be 300000.
 
-
 // Calibration for smoothing RPM:
-const byte numReadings = 70;  // Number of samples for smoothing. The higher, the more smoothing, but it's going to
+const byte numReadings = 2;  // Number of samples for smoothing. The higher, the more smoothing, but it's going to
                              // react slower to changes. 1 = no smoothing. Default: 2.
-
-
-
-
 
 /////////////
 // Variables:
@@ -102,15 +90,6 @@ unsigned long average;  // The RPM value after applying the smoothing.
 unsigned long circunferenciaRoda = 1.596; //Roda do DT1
 unsigned long velocidadeKm; // Velocidade em km/h
 
-
-
-
-
-// LCD I2C Display:
-#include <Wire.h>
-#include <LiquidCrystal_I2C.h>  // Include LCD i2c
-LiquidCrystal_I2C display(0x27, 16, 2);  // Create display.
-
 // tempo volta
 unsigned long segundos = 0;
 unsigned long minutos = 0;
@@ -123,30 +102,22 @@ unsigned long remainingTime = 1000;
 
 void setup()  // Start of setup:
 {
+  Serial.begin(9600);                                             // Begin serial communication.
+  attachInterrupt(digitalPinToInterrupt(2), Pulse_Event, RISING); // Enable interruption pin 2 when going from LOW to HIGH.
 
-  Serial.begin(9600);  // Begin serial communication.
-  attachInterrupt(digitalPinToInterrupt(2), Pulse_Event, RISING);  // Enable interruption pin 2 when going from LOW to HIGH.
+  INA.begin(80, 1000);
+  INA.setBusConversion(8500);
+  INA.setShuntConversion(8500);
+  INA.setAveraging(128);
+  INA.alertOnConversion(true);
+  INA.setMode(INA_MODE_CONTINUOUS_BOTH);
+  INA.alertOnBusOverVoltage(true, 40000);
 
-
-
-
-
-
-
-  // LCD Display:
-  display.init();  // Initialize display with the I2C address.
-  display.backlight(); //Initialize display backlight
-  display.setCursor(0,0);
-  display.print("MILHAGEM");
-  //////////////////////////////////
+  u8g.begin();
     delay(1000);  // We sometimes take several readings of the period to average. Since we don't have any readings
                 // stored we need a high enough value in micros() so if divided is not going to give negative values.
                 // The delay allows the micros() to be high enough for the first few cycles.
-
-
 }  // End of setup.
-
-
 
 
 
@@ -170,16 +141,8 @@ void loop()  // Start of loop:
     LastTimeCycleMeasure = CurrentMicros;
   }
 
-
-
-
-
   // Calculate the frequency:
   FrequencyRaw = 10000000000 / PeriodAverage;  // Calculate the frequency using the period between pulses.
-
-
-  
-
   
   // Detect if pulses stopped or frequency is too low, so we can show 0 Frequency:
   if(PeriodBetweenPulses > ZeroTimeout - ZeroDebouncingExtra || CurrentMicros - LastTimeCycleMeasure > ZeroTimeout - ZeroDebouncingExtra)
@@ -192,26 +155,14 @@ void loop()  // Start of loop:
     ZeroDebouncingExtra = 0;  // Reset the threshold to the normal value so it doesn't bounce.
   }
 
-
-
-
-
   FrequencyReal = FrequencyRaw / 10000;  // Get frequency without decimals.
                                           // This is not used to calculate RPM but we remove the decimals just in case
                                           // you want to print it.
-
-
-
-
 
   // Calculate the RPM:
   RPM = FrequencyRaw / PulsesPerRevolution * 60;  // Frequency divided by amount of pulses per revolution multiply by
                                                   // 60 seconds to get minutes.
   RPM = RPM / 10000;  // Remove the decimals.
-
-
-
-
 
   // Smoothing RPM:
   total = total - readings[readIndex];  // Advance to the next position in the array.
@@ -227,10 +178,6 @@ void loop()  // Start of loop:
   // Calculate the average:
   average = total / numReadings;  // The average value it's the smoothed result.
 
-
-
-
-
   // Print information on the serial monitor:
   // Comment this section if you have a display and you don't need to monitor the values on the serial monitor.
   // This is because disabling this section would make the loop run faster.
@@ -244,11 +191,6 @@ void loop()  // Start of loop:
   Serial.print(RPM);
   Serial.print("\tTachometer: ");
   Serial.println(average);
-
-
-
-
-
 
   // LCD  Display:
   // Convert variable into a string, so we can change the text alignment to the right:
@@ -312,22 +254,26 @@ void loop()  // Start of loop:
     segundos = 0;
     remainingTime = 0;
   }
+  u8g.firstPage();
+  do {
+    u8g.setFont(u8g_font_courR10);
+    u8g.setPrintPos(0, 15);
+    u8g.print(LastTimeWeMeasured);
+    u8g.print(" LTWM");
 
-  display.setCursor(0, 0); // (x,y).
-  display.print("V:");     // Text or value to print.
+    u8g.setPrintPos(0, 37);
+    u8g.print(digitalRead(2));
+    u8g.print(" ON");
+    
+    u8g.setPrintPos(0, 60);
+    u8g.print(PulseCounter);
+    u8g.print("medicoes");
 
-  display.setCursor(2, 0);     // (x,y).
-  display.print(velocidadeKm); // Text or value to print.
-
-  display.display(); // Print everything we set previously.
-
+  } while ( u8g.nextPage() );
 
 }  // End of loop.
 
 
-
-
- 
 void Pulse_Event()  // The interrupt runs this to calculate the period between pulses:
 {
 
